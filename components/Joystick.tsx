@@ -8,7 +8,6 @@ interface JoystickProps {
 }
 
 export const Joystick: React.FC<JoystickProps> = ({ onDirectionChange, onAbort }) => {
-  // Use fixed w/h and shrink-0 to prevent squashing in flex containers
   const btnClass = "w-11 h-11 md:w-14 md:h-14 bg-red-900/20 border border-red-500/30 rounded-lg flex items-center justify-center active:bg-red-500/50 active:scale-95 text-red-400 active:text-white text-lg transition-all shadow-[0_0_8px_rgba(220,38,38,0.1)] shrink-0";
   
   return (

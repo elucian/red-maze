@@ -390,7 +390,6 @@ const App: React.FC = () => {
           <HudColumn compact={layoutMode === 'MOBILE_LANDSCAPE'} />
           
           <div className="mt-auto w-full flex flex-col items-center">
-            {/* Show abort button even on mobile in landscape mode */}
             <button 
               onClick={abortGame}
               className="w-full py-2.5 md:py-3 bg-red-950/40 border border-red-500/30 text-red-500 font-black text-[10px] md:text-xs tracking-[0.3em] hover:bg-red-600 hover:text-white transition-all active:scale-95 uppercase mb-4"
@@ -457,7 +456,7 @@ const App: React.FC = () => {
         </aside>
       )}
 
-      {/* OVERLAYS (Refined "Reasonable" Sizes) */}
+      {/* OVERLAYS */}
       {gameState.status === GameStatus.IDLE && !gameState.isExited && (
         <div className="absolute inset-0 bg-black/80 flex items-center justify-center p-4 z-[100] backdrop-blur-sm">
           <div className="bg-black border-4 border-red-700 p-6 md:p-8 max-w-sm md:max-w-md w-full shadow-[0_0_60px_rgba(220,38,38,0.4)] flex flex-col items-center animate-in fade-in zoom-in duration-300">
