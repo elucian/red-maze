@@ -7,12 +7,13 @@
     <title>RED MAZE</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
     <style>
         body {
             background-color: #080504;
             margin: 0;
             overflow: hidden;
-            font-family: 'Courier New', Courier, monospace;
+            font-family: 'Press Start 2P', cursive, monospace;
         }
         canvas {
             image-rendering: pixelated;
@@ -20,6 +21,10 @@
         * {
             touch-action: none;
             user-select: none;
+        }
+        /* Override default font for UI elements that need clarity */
+        .system-font {
+            font-family: 'Courier New', Courier, monospace;
         }
     </style>
 <script type="importmap">
