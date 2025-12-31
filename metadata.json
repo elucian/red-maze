@@ -1,7 +1,5 @@
 {
   "name": "RED MAZE V2",
   "description": "A high-stakes tactical navigation experience. Guide your agent through the scarlet grid, harvesting data while evading neural phantoms.",
-  "requestFramePermissions": [
-    "microphone"
-  ]
+  "requestFramePermissions": []
 }
