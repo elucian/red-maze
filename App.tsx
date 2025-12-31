@@ -40,6 +40,8 @@ interface FullGameState extends GameState {
   hasPlayerStarted: boolean;
   isSimulating: boolean;
   isExited: boolean;
+  lastMoveDir: Direction; // Persist direction for rendering when stopped
+  gameSpeed: number; // 0.5 for manual, 1.0 for auto
 }
 
 const SCATTER_TARGETS: Record<string, Position> = {
@@ -75,7 +77,9 @@ const App: React.FC = () => {
     currentMode: GhostMode.SCATTER,
     hasPlayerStarted: false,
     isSimulating: false,
-    isExited: false
+    isExited: false,
+    lastMoveDir: Direction.RIGHT,
+    gameSpeed: 1.0
   });
 
   const [dimensions, setDimensions] = useState({ width: 0, height: 0, cellW: 30, cellH: 30, offsetX: 0, offsetY: 0 });
@@ -107,11 +111,11 @@ const App: React.FC = () => {
     let leftPanelW = 0, rightPanelW = 0, topHudH = 0, bottomControlsH = 0;
     
     if (mode === 'DESKTOP') {
-      leftPanelW = 260; 
-      rightPanelW = 0;
+      leftPanelW = 0; 
+      rightPanelW = 300; 
     } else if (mode === 'MOBILE_LANDSCAPE') {
-      leftPanelW = 180; 
-      rightPanelW = 180;
+      leftPanelW = 0; 
+      rightPanelW = 200; 
     } else {
       topHudH = 70; 
       bottomControlsH = 150; 
@@ -159,7 +163,7 @@ const App: React.FC = () => {
   }, [gameState.status, updateDimensions]);
 
   const abortGame = useCallback(() => {
-    setGameState(prev => ({ ...prev, status: GameStatus.IDLE, magnet: null, hasPlayerStarted: false }));
+    setGameState(prev => ({ ...prev, status: GameStatus.IDLE, magnet: null, hasPlayerStarted: false, gameSpeed: 1.0 }));
   }, []);
 
   useEffect(() => {
@@ -167,10 +171,30 @@ const App: React.FC = () => {
       if (e.key === 'Escape') {
         abortGame();
       }
+      
+      // Manual control sets game speed to 50%
+      if (gameState.status === GameStatus.PLAYING || gameState.status === GameStatus.POWERED_UP) {
+        let d = Direction.NONE;
+        if (e.key === 'ArrowUp') d = Direction.UP;
+        if (e.key === 'ArrowDown') d = Direction.DOWN;
+        if (e.key === 'ArrowLeft') d = Direction.LEFT;
+        if (e.key === 'ArrowRight') d = Direction.RIGHT;
+        
+        if (d !== Direction.NONE) {
+          e.preventDefault(); 
+          setGameState(prev => ({ 
+            ...prev, 
+            nextDir: d, 
+            magnet: null, 
+            hasPlayerStarted: true,
+            gameSpeed: 0.5 
+          }));
+        }
+      }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [abortGame]);
+  }, [abortGame, gameState.status]);
 
   const isWall = (x: number, y: number, isGhost = false, mode: GhostMode = GhostMode.SCATTER) => {
     const col = ((Math.round(x) % MAZE_COLS) + MAZE_COLS) % MAZE_COLS;
@@ -202,7 +226,7 @@ const App: React.FC = () => {
       { id: 'inky', pos: { x: 8, y: 9 }, dir: Direction.UP, color: GHOST_COLORS.INKY, isVulnerable: false, spawnPos: { x: 8, y: 9 }, mode: GhostMode.WAITING_IN_HOUSE, respawnTimer: 0, collisionTimer: 0, exitOrder: 2, patrolTarget: null },
       { id: 'clyde', pos: { x: 10, y: 9 }, dir: Direction.UP, color: GHOST_COLORS.CLYDE, isVulnerable: false, spawnPos: { x: 10, y: 9 }, mode: GhostMode.WAITING_IN_HOUSE, respawnTimer: 0, collisionTimer: 0, exitOrder: 3, patrolTarget: null },
     ];
-    setGameState({ score: currentScore, lives: currentLives, status: GameStatus.IDLE, level: level, pelletsLeft: pellets, powerTimer: 0, pacman: { x: 9, y: 15 }, pacmanDir: Direction.NONE, nextDir: Direction.NONE, magnet: null, maze: newMaze, gameStartTime: 0, modeTimer: 0, levelFrameCount: 0, currentMode: GhostMode.SCATTER, ghosts: allPossibleGhosts, hasPlayerStarted: false, isSimulating: simulate, isExited: false });
+    setGameState({ score: currentScore, lives: currentLives, status: GameStatus.IDLE, level: level, pelletsLeft: pellets, powerTimer: 0, pacman: { x: 9, y: 15 }, pacmanDir: Direction.NONE, nextDir: Direction.NONE, magnet: null, maze: newMaze, gameStartTime: 0, modeTimer: 0, levelFrameCount: 0, currentMode: GhostMode.SCATTER, ghosts: allPossibleGhosts, hasPlayerStarted: false, isSimulating: simulate, isExited: false, lastMoveDir: Direction.RIGHT, gameSpeed: 1.0 });
   };
 
   const startGame = (sim: boolean = false, startLevel: number = 1, currentScore: number = 0, currentLives: number = 3) => {
@@ -233,25 +257,42 @@ const App: React.FC = () => {
     setGameState(prev => {
       if (prev.status !== GameStatus.PLAYING && prev.status !== GameStatus.POWERED_UP) return prev;
       if (!prev.hasPlayerStarted && !prev.isSimulating) return prev;
-      let { pacman, pacmanDir, nextDir, magnet, score, pelletsLeft, status, powerTimer, lives, maze, modeTimer, levelFrameCount, currentMode, isSimulating, level, gameStartTime, hasPlayerStarted } = prev;
+      let { pacman, pacmanDir, nextDir, magnet, score, pelletsLeft, status, powerTimer, lives, maze, modeTimer, levelFrameCount, currentMode, isSimulating, level, hasPlayerStarted, lastMoveDir, gameSpeed } = prev;
       let ghosts = prev.ghosts.map(g => ({ ...g }));
-      levelFrameCount++; modeTimer++;
-      const playtimeSeconds = (Date.now() - gameStartTime) / 1000;
+      
+      // Update logic with speed multiplier
+      levelFrameCount += gameSpeed; 
+      modeTimer += gameSpeed;
+      
+      const playtimeSeconds = levelFrameCount / 60; // Approximate game time based on logic ticks
       const releaseThreshold = (5 - level) * 10;
       const huntThreshold = (6 - level) * 60;
       const isHunting = playtimeSeconds >= huntThreshold;
+      
       if (!isHunting) {
         const scatterDuration = 420; const chaseDuration = 1200;  
         if (currentMode === GhostMode.SCATTER && modeTimer > scatterDuration) { currentMode = GhostMode.CHASE; modeTimer = 0; }
         else if (currentMode === GhostMode.CHASE && modeTimer > chaseDuration) { currentMode = GhostMode.SCATTER; modeTimer = 0; }
       } else { currentMode = GhostMode.CHASE; }
+      
       const oppDirs: Record<Direction, Direction> = { [Direction.UP]: Direction.DOWN, [Direction.DOWN]: Direction.UP, [Direction.LEFT]: Direction.RIGHT, [Direction.RIGHT]: Direction.LEFT, [Direction.NONE]: Direction.NONE };
-      const pSpeed = PACMAN_SPEED; const gridX = Math.round(pacman.x); const gridY = Math.round(pacman.y); const distToCenter = Math.hypot(pacman.x - gridX, pacman.y - gridY);
+      const pSpeed = PACMAN_SPEED * gameSpeed; 
+      const gridX = Math.round(pacman.x); 
+      const gridY = Math.round(pacman.y); 
+      const distToCenter = Math.hypot(pacman.x - gridX, pacman.y - gridY);
+      
+      if (pacmanDir !== Direction.NONE) lastMoveDir = pacmanDir;
+
       if (distToCenter < pSpeed * 0.95) {
         const gx = ((gridX % MAZE_COLS) + MAZE_COLS) % MAZE_COLS; const gy = ((gridY % MAZE_ROWS) + MAZE_ROWS) % MAZE_ROWS;
         if (maze[gy][gx] === 1 || maze[gy][gx] === 2) {
           score += (maze[gy][gx] === 2 ? 50 : 10); pelletsLeft--;
-          if (maze[gy][gx] === 2) { status = GameStatus.POWERED_UP; powerTimer = 600; audioService.playPower(); ghosts = ghosts.map(g => ({ ...g, isVulnerable: true, dir: oppDirs[g.dir] || Direction.UP })); }
+          if (maze[gy][gx] === 2) { 
+            status = GameStatus.POWERED_UP; 
+            powerTimer = 600; 
+            audioService.playPower(); 
+            ghosts = ghosts.map(g => ({ ...g, isVulnerable: true, dir: oppDirs[g.dir] || Direction.UP })); 
+          }
           else { audioService.playWaka(); }
           maze[gy][gx] = 3;
         }
@@ -267,16 +308,29 @@ const App: React.FC = () => {
         }
       }
       if (pacmanDir !== Direction.NONE) { const m = DIRECTIONS[pacmanDir]; pacman.x = (pacman.x + m.dx * pSpeed + MAZE_COLS) % MAZE_COLS; pacman.y = (pacman.y + m.dy * pSpeed + MAZE_ROWS) % MAZE_ROWS; }
-      if (powerTimer > 0) { powerTimer--; if (powerTimer === 0) { status = GameStatus.PLAYING; ghosts = ghosts.map(g => ({ ...g, isVulnerable: false })); } }
+      
+      if (powerTimer > 0) { 
+        powerTimer = Math.max(0, powerTimer - gameSpeed); 
+        if (powerTimer === 0) { status = GameStatus.PLAYING; ghosts = ghosts.map(g => ({ ...g, isVulnerable: false })); } 
+      }
+      
       ghosts = ghosts.map(g => { if (g.mode === GhostMode.WAITING_IN_HOUSE && playtimeSeconds >= releaseThreshold + (g.exitOrder * 2)) { return { ...g, mode: GhostMode.EXITING_HOUSE }; } return g; });
       let lifeLost = false;
       const nextGhosts = ghosts.map(ghost => {
-        if (ghost.respawnTimer > 0) { const newTimer = ghost.respawnTimer - 1; if (newTimer === 0) return { ...ghost, respawnTimer: 0, pos: { ...ghost.spawnPos }, mode: GhostMode.WAITING_IN_HOUSE, isVulnerable: false }; return { ...ghost, respawnTimer: newTimer }; }
-        if (ghost.collisionTimer > 0) { ghost.collisionTimer--; if (ghost.collisionTimer === 0) { ghost.dir = oppDirs[ghost.dir] || Direction.UP; } return ghost; }
+        if (ghost.respawnTimer > 0) { 
+          const newTimer = Math.max(0, ghost.respawnTimer - gameSpeed); 
+          if (newTimer === 0) return { ...ghost, respawnTimer: 0, pos: { ...ghost.spawnPos }, mode: GhostMode.WAITING_IN_HOUSE, isVulnerable: false }; 
+          return { ...ghost, respawnTimer: newTimer }; 
+        }
+        if (ghost.collisionTimer > 0) { 
+          ghost.collisionTimer = Math.max(0, ghost.collisionTimer - gameSpeed); 
+          if (ghost.collisionTimer === 0) { ghost.dir = oppDirs[ghost.dir] || Direction.UP; } 
+          return ghost; 
+        }
         const distToP = Math.hypot(ghost.pos.x - pacman.x, ghost.pos.y - pacman.y);
         if (distToP < 0.65) { if (ghost.isVulnerable) { audioService.playEatGhost(); score += 200; return { ...ghost, respawnTimer: 600, pos: { ...ghost.spawnPos }, isVulnerable: false, mode: GhostMode.WAITING_IN_HOUSE }; } else { lifeLost = true; } }
         let { x, y } = ghost.pos; let { dir, mode } = ghost; const gcx = Math.round(x); const gcy = Math.round(y); const gDist = Math.hypot(x - gcx, y - gcy);
-        if (gDist < GHOST_SPEED_BASE * 0.4) {
+        if (gDist < (GHOST_SPEED_BASE * gameSpeed) * 0.4) {
           const gx = ((gcx % MAZE_COLS) + MAZE_COLS) % MAZE_COLS; const gy = ((gcy % MAZE_ROWS) + MAZE_ROWS) % MAZE_ROWS;
           if (mode === GhostMode.EXITING_HOUSE) { if (y <= 7.05) { mode = GhostMode.SCATTER; dir = Math.random() > 0.5 ? Direction.LEFT : Direction.RIGHT; x = 9; y = 7; } else if (Math.abs(x - 9) < 0.1) { dir = Direction.UP; x = 9; } else { dir = x < 9 ? Direction.RIGHT : Direction.LEFT; } }
           else if (mode !== GhostMode.WAITING_IN_HOUSE) {
@@ -293,12 +347,12 @@ const App: React.FC = () => {
             x = gcx; y = gcy; 
           }
         }
-        if (mode !== GhostMode.WAITING_IN_HOUSE) { const s = ghost.isVulnerable ? GHOST_SPEED_BASE * 0.6 : GHOST_SPEED_BASE; const gm = DIRECTIONS[dir] || { dx: 0, dy: 0 }; x = (x + gm.dx * s + MAZE_COLS) % MAZE_COLS; y = (y + gm.dy * s + MAZE_ROWS) % MAZE_ROWS; }
+        if (mode !== GhostMode.WAITING_IN_HOUSE) { const s = (ghost.isVulnerable ? GHOST_SPEED_BASE * 0.6 : GHOST_SPEED_BASE) * gameSpeed; const gm = DIRECTIONS[dir] || { dx: 0, dy: 0 }; x = (x + gm.dx * s + MAZE_COLS) % MAZE_COLS; y = (y + gm.dy * s + MAZE_ROWS) % MAZE_ROWS; }
         return { ...ghost, pos: { x, y }, dir, mode };
       });
-      if (lifeLost) { audioService.playDeath(); lives--; if (lives <= 0) { status = GameStatus.LOST; } else { return { ...prev, pacman: { x: 9, y: 15 }, pacmanDir: Direction.NONE, lives, magnet: null, ghosts: prev.ghosts.map(g => ({ ...g, pos: { ...g.spawnPos }, mode: GhostMode.WAITING_IN_HOUSE, isVulnerable: false, respawnTimer: 0, collisionTimer: 0, patrolTarget: null })), hasPlayerStarted: false, levelFrameCount: 0 }; } }
+      if (lifeLost) { audioService.playDeath(); lives--; if (lives <= 0) { status = GameStatus.LOST; } else { return { ...prev, pacman: { x: 9, y: 15 }, pacmanDir: Direction.NONE, lives, magnet: null, ghosts: prev.ghosts.map(g => ({ ...g, pos: { ...g.spawnPos }, mode: GhostMode.WAITING_IN_HOUSE, isVulnerable: false, respawnTimer: 0, collisionTimer: 0, patrolTarget: null })), hasPlayerStarted: false, levelFrameCount: 0, lastMoveDir: Direction.RIGHT, gameSpeed: 1.0 }; } }
       if (pelletsLeft === 0) { status = GameStatus.WON; }
-      return { ...prev, pacman, pacmanDir, nextDir, magnet, score, pelletsLeft, status, powerTimer, ghosts: nextGhosts, lives, maze, modeTimer, levelFrameCount, currentMode };
+      return { ...prev, pacman, pacmanDir, nextDir, magnet, score, pelletsLeft, status, powerTimer, ghosts: nextGhosts, lives, maze, modeTimer, levelFrameCount, currentMode, lastMoveDir, gameSpeed };
     });
   }, []);
 
@@ -310,12 +364,12 @@ const App: React.FC = () => {
     drawBrick(x, y, w, bh); drawBrick(x, y + bh, w, bh);
   };
 
-  const drawPacman = (ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, dir: Direction) => {
+  const drawPacman = (ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, dir: Direction, isMoving: boolean) => {
     const cx = x + w/2; const cy = y + h/2; const r = (Math.min(w, h)/2) * 0.88; 
     const rot = { [Direction.RIGHT]: 0, [Direction.LEFT]: Math.PI, [Direction.UP]: -Math.PI/2, [Direction.DOWN]: Math.PI/2, [Direction.NONE]: 0 };
     ctx.save(); ctx.translate(cx, cy); ctx.rotate(rot[dir]);
     ctx.fillStyle = '#ffff00'; ctx.beginPath(); ctx.moveTo(0, 0);
-    const m = (dir === Direction.NONE) ? MAX_MOUTH_ANGLE * Math.PI : Math.abs(Math.sin(Date.now() / 80)) * MAX_MOUTH_ANGLE * Math.PI;
+    const m = !isMoving ? MAX_MOUTH_ANGLE * Math.PI : Math.abs(Math.sin(Date.now() / 80)) * MAX_MOUTH_ANGLE * Math.PI;
     ctx.arc(0, 0, r, m, 2 * Math.PI - m); ctx.fill();
     ctx.fillStyle = '#000'; 
     const eyeRadius = r * 0.16; const eyeX = r * 0.35; let eyeY = -r * 0.45; 
@@ -346,7 +400,9 @@ const App: React.FC = () => {
       ctx.save(); ctx.translate(offsetX, offsetY);
       gameState.maze.forEach((row, y) => { row.forEach((cell, x) => { if (cell === 0) drawWall(ctx, x * cellW, y * cellH, cellW, cellH); else if (cell === 1) { ctx.fillStyle = '#3b82f6'; ctx.beginPath(); ctx.arc(x * cellW + cellW/2, y * cellH + cellH/2, 3, 0, Math.PI * 2); ctx.fill(); } else if (cell === 2) { ctx.fillStyle = '#ef4444'; ctx.beginPath(); ctx.arc(x * cellW + cellW/2, y * cellH + cellH/2, 7, 0, Math.PI * 2); ctx.fill(); } }); });
       if (gameState.magnet) { ctx.strokeStyle = '#ffff00'; ctx.lineWidth = 2; ctx.setLineDash([5, 5]); ctx.beginPath(); ctx.arc(gameState.magnet.pos.x * cellW + cellW/2, gameState.magnet.pos.y * cellH + cellH/2, cellW * 0.8, 0, Math.PI * 2); ctx.stroke(); }
-      drawPacman(ctx, gameState.pacman.x * cellW, gameState.pacman.y * cellH, cellW, cellH, gameState.pacmanDir);
+      const isMoving = gameState.pacmanDir !== Direction.NONE;
+      const renderDir = isMoving ? gameState.pacmanDir : gameState.lastMoveDir;
+      drawPacman(ctx, gameState.pacman.x * cellW, gameState.pacman.y * cellH, cellW, cellH, renderDir, isMoving);
       gameState.ghosts.forEach(g => { if (g.respawnTimer === 0) drawGhost(ctx, g.pos.x * cellW, g.pos.y * cellH, cellW, cellH, g.color, g.isVulnerable, g.dir, g.collisionTimer > 0); });
       ctx.restore();
     }
@@ -358,7 +414,15 @@ const App: React.FC = () => {
     const x = e.clientX - rect.left; const y = e.clientY - rect.top;
     const gx = Math.floor((x - dimensions.offsetX) / dimensions.cellW); 
     const gy = Math.floor((y - dimensions.offsetY) / dimensions.cellH);
-    if (gx >= 0 && gx < MAZE_COLS && gy >= 0 && gy < MAZE_ROWS && !isWall(gx, gy)) { setGameState(prev => ({ ...prev, magnet: { pos: { x: gx, y: gy } }, hasPlayerStarted: true })); }
+    if (gx >= 0 && gx < MAZE_COLS && gy >= 0 && gy < MAZE_ROWS && !isWall(gx, gy)) { 
+      // Click target reactivates auto mode and speeds up to 100%
+      setGameState(prev => ({ 
+        ...prev, 
+        magnet: { pos: { x: gx, y: gy } }, 
+        hasPlayerStarted: true,
+        gameSpeed: 1.0 
+      })); 
+    }
   };
 
   const HudColumn = ({ compact }: { compact?: boolean }) => (
@@ -383,27 +447,7 @@ const App: React.FC = () => {
   return (
     <div ref={containerRef} className="fixed inset-0 bg-[#080504] overflow-hidden flex touch-none select-none">
       
-      {/* LANDSCAPE SIDEBAR (Desktop or Mobile) */}
-      {(layoutMode === 'DESKTOP' || layoutMode === 'MOBILE_LANDSCAPE') && (
-        <aside className={`${layoutMode === 'DESKTOP' ? 'w-[260px] md:w-[300px]' : 'w-[180px]'} bg-black border-r border-white/10 p-4 md:p-6 flex flex-col items-center z-20 shadow-[20px_0_30px_rgba(0,0,0,0.5)] ${layoutMode === 'DESKTOP' ? 'justify-start gap-10' : 'justify-between'}`}>
-          <h2 className={`text-red-600 font-black italic tracking-tighter drop-shadow-[0_0_15px_red] text-center uppercase ${layoutMode === 'DESKTOP' ? 'text-xl md:text-3xl' : 'text-[13px] md:text-sm'}`}>RED MAZE</h2>
-          <HudColumn compact={layoutMode === 'MOBILE_LANDSCAPE'} />
-          
-          <div className="mt-auto w-full flex flex-col items-center">
-            <button 
-              onClick={abortGame}
-              className="w-full py-2.5 md:py-3 bg-red-950/40 border border-red-500/30 text-red-500 font-black text-[10px] md:text-xs tracking-[0.3em] hover:bg-red-600 hover:text-white transition-all active:scale-95 uppercase mb-4"
-            >
-              ABORT
-            </button>
-            <div className="opacity-20 text-[6px] text-white font-mono uppercase tracking-[0.3em] text-center">Neural Link Active</div>
-          </div>
-        </aside>
-      )}
-
-      {/* MAIN GAME AREA */}
       <main className="flex-1 relative flex flex-col bg-[#080504]">
-        {/* PORTRAIT HEADER */}
         {layoutMode === 'PORTRAIT' && (
           <header className="h-[70px] w-full flex flex-col items-center justify-center bg-black border-b border-white/10 z-20 gap-1 p-2">
              <h2 className="text-red-600 font-black text-xs italic tracking-tighter drop-shadow-[0_0_8px_red] uppercase">RED MAZE</h2>
@@ -435,28 +479,53 @@ const App: React.FC = () => {
           className="flex-1 block cursor-crosshair" 
         />
 
-        {/* PORTRAIT BOTTOM CONTROLS */}
         {layoutMode === 'PORTRAIT' && (
           <div className="h-[150px] bg-black border-t border-white/5 flex items-center justify-center pointer-events-auto z-20">
             <Joystick 
-              onDirectionChange={(d) => setGameState(prev => ({ ...prev, nextDir: d, magnet: null, hasPlayerStarted: true }))} 
+              onDirectionChange={(d) => setGameState(prev => ({ 
+                ...prev, 
+                nextDir: d, 
+                magnet: null, 
+                hasPlayerStarted: true,
+                gameSpeed: 0.5 
+              }))} 
               onAbort={abortGame}
             />
           </div>
         )}
       </main>
 
-      {/* MOBILE LANDSCAPE RIGHT PANEL */}
-      {layoutMode === 'MOBILE_LANDSCAPE' && (
-        <aside className="w-[180px] bg-black border-l border-white/10 p-3 flex flex-col items-center justify-center z-20 shadow-[-20px_0_30px_rgba(0,0,0,0.5)]">
-          <Joystick 
-            onDirectionChange={(d) => setGameState(prev => ({ ...prev, nextDir: d, magnet: null, hasPlayerStarted: true }))} 
-            onAbort={abortGame}
-          />
+      {(layoutMode === 'DESKTOP' || layoutMode === 'MOBILE_LANDSCAPE') && (
+        <aside className={`${layoutMode === 'DESKTOP' ? 'w-[300px]' : 'w-[200px]'} bg-black border-l border-white/10 p-4 md:p-6 flex flex-col items-center z-20 shadow-[-20px_0_30px_rgba(0,0,0,0.5)]`}>
+          <div className="flex flex-col items-center w-full gap-8">
+            <h2 className={`text-red-600 font-black italic tracking-tighter drop-shadow-[0_0_15px_red] text-center uppercase ${layoutMode === 'DESKTOP' ? 'text-xl md:text-3xl' : 'text-sm md:text-base'}`}>RED MAZE</h2>
+            <HudColumn compact={layoutMode === 'MOBILE_LANDSCAPE'} />
+          </div>
+          
+          <div className="flex-1 flex flex-col justify-center items-center w-full">
+            <Joystick 
+              onDirectionChange={(d) => setGameState(prev => ({ 
+                ...prev, 
+                nextDir: d, 
+                magnet: null, 
+                hasPlayerStarted: true,
+                gameSpeed: 0.5 
+              }))} 
+            />
+          </div>
+          
+          <div className="flex flex-col items-center w-full gap-6">
+            <button 
+              onClick={abortGame}
+              className="w-full py-2.5 md:py-3 bg-red-950/40 border border-red-500/30 text-red-500 font-black text-[10px] md:text-xs tracking-[0.3em] hover:bg-red-600 hover:text-white transition-all active:scale-95 uppercase"
+            >
+              ABORT
+            </button>
+            <div className="opacity-20 text-[6px] text-white font-mono uppercase tracking-[0.3em] text-center">Neural Link Active</div>
+          </div>
         </aside>
       )}
 
-      {/* OVERLAYS */}
       {gameState.status === GameStatus.IDLE && !gameState.isExited && (
         <div className="absolute inset-0 bg-black/80 flex items-center justify-center p-4 z-[100] backdrop-blur-sm">
           <div className="bg-black border-4 border-red-700 p-6 md:p-8 max-w-sm md:max-w-md w-full shadow-[0_0_60px_rgba(220,38,38,0.4)] flex flex-col items-center animate-in fade-in zoom-in duration-300">
@@ -499,7 +568,7 @@ const App: React.FC = () => {
                 <div className="bg-white/5 px-4 py-4 border border-white/10 mb-6">
                   <p className="text-white text-2xl md:text-4xl font-mono font-black tabular-nums mb-1 leading-none">{gameState.score} BITS</p>
                 </div>
-                <button onClick={() => gameState.level === 4 ? setGameState(prev => ({ ...prev, status: GameStatus.IDLE })) : startGame(false, gameState.level + 1, gameState.score, gameState.lives)} className="w-full py-3 bg-green-600 hover:bg-green-500 text-white font-black text-base md:text-lg uppercase tracking-[0.1em] transition-all active:scale-95">
+                <button onClick={() => gameState.level === 4 ? setGameState(prev => ({ ...prev, status: GameStatus.IDLE })) : startGame(false, gameState.level + 1, gameState.score, 3)} className="w-full py-3 bg-green-600 hover:bg-green-500 text-white font-black text-base md:text-lg uppercase tracking-[0.1em] transition-all active:scale-95">
                   {gameState.level === 4 ? 'RETURN HUB' : 'NEXT SECTOR'}
                 </button>
               </>
